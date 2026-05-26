@@ -1,0 +1,67 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2106-10-31
+Description: Order Processing POC
+
+Resources:
+  OrderTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: ProcessedOrders
+      AttributeDefinitions:
+        - AttributeName: OrderId 
+          AttributeType: S
+        - AttributeName: Status
+          AttributeType: S
+      KeySchema:
+        - AttributeName: OrderId
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: StatusIndex
+          KeySchema:
+            - AttributeName: Status
+              KeyType: Hash
+          Projection:
+            ProjectionType: ALL
+      BillingMode: PAY_PER_REQUEST
+
+  FetchSalesforceLambda:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: lambda/fetch_salseforce/
+      Handler: app.lambda_handler
+      Runtime: python3.11
+      Policies: 
+        - SecretMAnagerReadWrite
+
+  ProcessOrderLambda:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: lambda/process_order/
+      Handler: app.lambda_handler
+      Runtime: python3.11
+      Environment: 
+        Variables:
+          TABLE_NAME: !Ref OrderTable
+      Policies: 
+        - DynamoDBCrudPolicy:
+            TableName: !Ref OrderTable
+
+
+  OrderStateMAchine:
+    Type: AWS::Serverless::statemachine
+    Properties:
+      DefinitionUri: statemachine/order_workflow.asl.json
+      DefinitionSubstitutions: 
+        FetchLambdaArn: !GetAtt FetchSalesforceLambda.Arn
+        ProcessLambdaArn: !GetAtt ProcessOrderLambda.Arn
+      Policies: 
+        - LambdaInvokePolicy:
+            FunctionName: !Ref FetchSalesforceLambda
+        - LambdaInvokePolicy: 
+            FunctionName: !Ref ProcessOrderLambda
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties:
+            Path: /process-order
+            Method: post
